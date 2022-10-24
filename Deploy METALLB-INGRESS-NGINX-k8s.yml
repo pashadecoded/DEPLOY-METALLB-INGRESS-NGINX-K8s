@@ -1,0 +1,473 @@
+#SETTING UP METALLB INGRESS AND NGINX IN MINIKUBE WINDOWS
+
+PS C:\mobius-k8s> minikube profile list
+|----------|-----------|---------|--------------|------|---------|---------|-------|--------|
+| Profile  | VM Driver | Runtime |      IP      | Port | Version | Status  | Nodes | Active |
+|----------|-----------|---------|--------------|------|---------|---------|-------|--------|
+| minikube | docker    | docker  | 192.168.49.2 | 8443 | v1.25.2 | Running |     1 | *      |
+|----------|-----------|---------|--------------|------|---------|---------|-------|--------|
+
+# SETTING UP METALLB USING HELM CHART
+
+METALLB REQUIREMENTS 
+
+Requirements
+MetalLB requires the following to function:
+
+A Kubernetes cluster, running Kubernetes 1.13.0 or later, that does not already have network load-balancing functionality.
+A cluster network configuration that can coexist with MetalLB.
+Some IPv4 addresses for MetalLB to hand out.
+When using the BGP operating mode, you will need one or more routers capable of speaking BGP.
+When using the L2 operating mode, traffic on port 7946 (TCP & UDP, other port can be configured) must be allowed between nodes, as required by memberlist.
+
+AS PER THE METALLB OFFICIAL DOCUMENTATION CHECKING KUBE-PROXY CM IN KUBE-SYSTEM NS FOR IPVS STRICT ARP COMPONENT
+
+ipvs:
+  excludeCIDRs: null
+  minSyncPeriod: 0s
+  scheduler: ""
+  strictARP: false
+  syncPeriod: 0s
+  tcpFinTimeout: 0s
+  tcpTimeout: 0s
+  udpTimeout: 0s
+kind: KubeProxyConfiguration
+metricsBindAddress: 0.0.0.0:10249
+mode: ""
+
+AS PER THE ABOVE COMPONENTES FOR CM KUBE-PROXY IN MINIKUBE IPVS MODE IS "" WHICH MEANS BY DEFAULT STRICT ARP IS TRUE AND WE DONT NEED TO CHANGE ANYTHING
+
+# CHECKING THE AVAILABLE IP ADDRESSES RANGE TO BE UTILISED TO ASSIGN TO PODS WITH LOADBALANCER SERVICE TYPE
+
+# LINUX run ip a to get ip addresses, choose eth1 series ip addresses
+
+example: 172.17.0.1/16 
+
+and run sipcalc command to check the range of ip address
+
+sudo apt install sipcalc
+
+mpasha@qasdevtscsk3d01:/home/mpasha$ which sipcalc
+/usr/bin/sipcalc
+
+mpasha@qasdevtscsk3d01:/home/mpasha$ sipcalc 172.17.0.1/16
+-[ipv4 : 172.17.0.1/16] - 0
+
+[CIDR]
+Host address            - 172.17.0.1
+Host address (decimal)  - 2886795265
+Host address (hex)      - AC110001
+Network address         - 172.17.0.0
+Network mask            - 255.255.0.0
+Network mask (bits)     - 16
+Network mask (hex)      - FFFF0000
+Broadcast address       - 172.17.255.255
+Cisco wildcard          - 0.0.255.255
+Addresses in network    - 65536
+Network range           - 172.17.0.0 - 172.17.255.255
+Usable range            - 172.17.0.1 - 172.17.255.254
+
+from the above output we can use a suitable range maybe 10 to 20 addresses from the usable range thats not being utilised by anything else inorder to avoid IP conflict.
+
+172.17.210.210-172.17.210.220
+
+# WINDOES run ipconfig a to get ip addresses, choose eth1 series ip addresses check the subnet mask and choose the correct cidr value 
+
+PS C:\mobius-k8s> IPCONFIG
+
+Windows IP Configuration
+
+Ethernet adapter vEthernet (Default Switch):
+
+   Connection-specific DNS Suffix  . :
+   Link-local IPv6 Address . . . . . : fe80::19fe:9b7c:461f:7288%16
+   IPv4 Address. . . . . . . . . . . : 192.168.208.1
+   Subnet Mask . . . . . . . . . . . : 255.255.240.0
+   Default Gateway . . . . . . . . . :
+
+Ethernet adapter vEthernet (WSL):
+
+   Connection-specific DNS Suffix  . :
+   Link-local IPv6 Address . . . . . : fe80::c84d:8685:7c53:2bd5%24
+   IPv4 Address. . . . . . . . . . . : 172.30.224.1
+   Subnet Mask . . . . . . . . . . . : 255.255.240.0
+   Default Gateway . . . . . . . . . :
+
+From the above we can use the IP address of the vEthernet (Default Switch) with the help of CIDR value chart below 
+
+
+CIDR	SUBNET MASK	      WILDCARD MASK	      # OF IP ADDRESSES	      # OF USABLE IP ADDRESSES
+/32	  255.255.255.255  	0.0.0.0	                1	                        1
+/31	  255.255.255.254 	0.0.0.1	                2	                        2*
+/30	  255.255.255.252 	0.0.0.3	                4	                        2
+/29	  255.255.255.248 	0.0.0.7	                8	                        6
+/28	  255.255.255.240 	0.0.0.15	              16	                      14
+/27	  255.255.255.224 	0.0.0.31	              32	                      30
+/26	  255.255.255.192 	0.0.0.63	              64	                      62
+/25	  255.255.255.128 	0.0.0.127	              128	                      126
+/24	    255.255.255.0 	0.0.0.255	              256	                      254
+/23	    255.255.254.0 	0.0.1.255	              512	                      510
+/22	    255.255.252.0 	0.0.3.255	              1,024	                    1,022
+/21	    255.255.248.0 	0.0.7.255	              2,048	                    2,046
+/20	    255.255.240.0 	0.0.15.255	            4,096	                    4,094
+/19	    255.255.224.0 	0.0.31.255	            8,192	                    8,190
+/18	    255.255.192.0 	0.0.63.255	            16,384	                  16,382
+/17	    255.255.128.0	  0.0.127.255	            32,768	                  32,766
+/16	      255.255.0.0 	0.0.255.255	            65,536	                  65,534
+/15	      255.254.0.0 	0.1.255.255	            131,072	                  131,070
+/14	      255.252.0.0	  0.3.255.255	            262,144	                  262,142
+/13	      255.248.0.0	  0.7.255.255	            524,288	                  524,286
+/12	      255.240.0.0	  0.15.255.255	          1,048,576	                1,048,574
+/11	      255.224.0.0	  0.31.255.255	          2,097,152	                2,097,150
+/10	      255.192.0.0	  0.63.255.255	          4,194,304	                4,194,302
+/9	      255.128.0.0	  0.127.255.255	          8,388,608	                8,388,606
+/8	        255.0.0.0	  0.255.255.255	          16,777,216	              16,777,214
+/7	        254.0.0.0	  1.255.255.255	          33,554,432	              33,554,430
+/6	        252.0.0.0	  3.255.255.255	          67,108,864	              67,108,862
+/5	        248.0.0.0	  7.255.255.255	          134,217,728	              134,217,726
+/4	        240.0.0.0	  15.255.255.255	        268,435,456	              268,435,454
+/3	        224.0.0.0	  31.255.255.255	        536,870,912	              536,870,910
+/2	        192.0.0.0	  63.255.255.255	        1,073,741,824	            1,073,741,822
+/1	        128.0.0.0	  127.255.255.255	        2,147,483,648	            2,147,483,646
+/0	          0.0.0.0	  255.255.255.255	        4,294,967,296	            4,294,967,294
+
+
+
+fOR ABOVE DEFAULT SWITCH  
+IPv4 Address. . . . . . . . . . . : 192.168.208.1
+Subnet Mask . . . . . . . . . . . : 255.255.240.0
+
+
+THE CIDR VALUE IS 192.168.208.1/20
+
+mpasha@qasdevtscsk3d01:/home/mpasha$ sipcalc 192.168.208.1/20
+-[ipv4 : 192.168.208.1/20] - 0
+
+[CIDR]
+Host address            - 192.168.208.1
+Host address (decimal)  - 3232288769
+Host address (hex)      - C0A8D001
+Network address         - 192.168.208.0
+Network mask            - 255.255.240.0
+Network mask (bits)     - 20
+Network mask (hex)      - FFFFF000
+Broadcast address       - 192.168.223.255
+Cisco wildcard          - 0.0.15.255
+Addresses in network    - 4096
+Network range           - 192.168.208.0 - 192.168.223.255
+Usable range            - 192.168.208.1 - 192.168.223.254
+
+so from the above conclusion from ubuntuin wsl we can get the range and use20 ip address from that range 
+
+192.168.223.10-192.168.223.30
+
+# BEFORE WE DEPLOY METALLB HELM CHART WE MUST DELOY TWO RESOURCES IN THE METALLB NAMESPACE IP-ADDRESSPOOL & L2ADVERTISEMENT
+
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: first-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  #- 192.168.10.0/24
+  #- 192.168.9.1-192.168.9.5
+  #- fc00:f853:0ccd:e799::/124
+  #- 172.17.210.210-172.17.210.220
+  - 192.168.223.10-192.168.223.30
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: L2Advertisement
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+  - first-pool
+
+#Deploying METALLB
+
+PS C:\mobius-k8s> kubectl get ns
+NAME              STATUS   AGE
+default           Active   5d5h
+kube-node-lease   Active   5d5h
+kube-public       Active   5d5h
+kube-system       Active   5d5h
+mobius            Active   23h
+mobiusview        Active   23h
+nginx             Active   32h
+pgadmin4          Active   30h
+postgres          Active   32h
+
+
+
+
+PS C:\mobius-k8s> helm repo add metallb https://metallb.github.io/metallb
+"metallb" has been added to your repositories
+
+PS C:\mobius-k8s> helm repo update
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "metallb" chart repository
+...Successfully got an update from the "kubernetes-dashboard" chart repository
+...Successfully got an update from the "runix" chart repository
+...Successfully got an update from the "bitnami" chart repository
+Update Complete. ⎈Happy Helming!⎈
+
+PS C:\mobius-k8s> helm search repo metallb
+NAME            CHART VERSION   APP VERSION     DESCRIPTION
+bitnami/metallb 4.1.8           0.13.7          MetalLB is a load-balancer implementation for b...
+metallb/metallb 0.13.7          v0.13.7         A network load-balancer implementation for Kube...
+
+PS C:\mobius-k8s> helm pull metallb/metallb
+
+PS C:\mobius-k8s> helm install metallb .\metallb-0.13.7.tgz -n metallb --create-namespace
+NAME: metallb
+LAST DEPLOYED: Mon Oct 24 06:50:11 2022
+NAMESPACE: metallb
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+MetalLB is now running in the cluster.
+
+Now you can configure it via its CRs. Please refer to the metallb official docs
+on how to use the CRs.
+
+# Deploying Address pool and L2ad in the METALLB NS
+
+PS C:\mobius-k8s> kubectl apply -f .\metallb-adresspool-l2ad.yaml -n metallb
+ipaddresspool.metallb.io/first-pool created
+l2advertisement.metallb.io/l2advertisement created
+
+PS C:\mobius-k8s> kubectl get all -n metallb
+
+NAME                                     READY   STATUS    RESTARTS   AGE
+pod/metallb-controller-99b88c55f-k4fnm   1/1     Running   0          2m47s
+pod/metallb-speaker-cxqdw                1/1     Running   0          2m47s
+
+NAME                              TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)   AGE
+service/metallb-webhook-service   ClusterIP   10.97.11.25   <none>        443/TCP   2m47s
+
+NAME                             DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
+daemonset.apps/metallb-speaker   1         1         1       1            1           kubernetes.io/os=linux   2m47s
+
+NAME                                 READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/metallb-controller   1/1     1            1           2m47s
+
+NAME                                           DESIRED   CURRENT   READY   AGE
+replicaset.apps/metallb-controller-99b88c55f   1         1         1       2m47s
+
+# Creating a LOADBALANCER SVC FOR NGINX TO TEST METALLB
+
+PS C:\mobius-k8s> kubectl get all -n nginx
+
+NAME                        READY   STATUS    RESTARTS      AGE
+pod/nginx-76d6c9b8c-sxwhs   1/1     Running   3 (24h ago)   32h
+
+NAME                            TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+service/nginx-76d6c9b8c-sxwhs   ClusterIP   10.99.219.249   <none>        80/TCP    17h
+
+NAME                    READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/nginx   1/1     1            1           32h
+
+NAME                              DESIRED   CURRENT   READY   AGE
+replicaset.apps/nginx-76d6c9b8c   1         1         1       32h
+
+
+PS C:\mobius-k8s> kubectl expose pod/nginx-76d6c9b8c-sxwhs -n nginx --type=LoadBalancer --port=80 --name=nginx-lb
+service/nginx-lb exposed
+
+# verifying that LOADBALANCER SVC is created & EXTERNAL IP IS Assigned
+
+PS C:\mobius-k8s> kubectl get all -n nginx
+NAME                        READY   STATUS    RESTARTS      AGE
+pod/nginx-76d6c9b8c-sxwhs   1/1     Running   3 (24h ago)   32h
+
+NAME                            TYPE           CLUSTER-IP       EXTERNAL-IP      PORT(S)        AGE
+service/nginx-76d6c9b8c-sxwhs   ClusterIP      10.99.219.249    <none>           80/TCP         17h
+service/nginx-lb                LoadBalancer   10.107.235.127   192.168.223.10   80:32720/TCP   5s
+
+NAME                    READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/nginx   1/1     1            1           32h
+
+NAME                              DESIRED   CURRENT   READY   AGE
+replicaset.apps/nginx-76d6c9b8c   1         1         1       32h
+
+# METALLB has successfully assigned EXTERMAL IP for NGINX-LB SVC
+
+in normal k8s approach the external ip should work in the browser out of the box but incase of minikube we need to run the following command to tunnel it out of the docker network.
+
+PS C:\mobius-k8s> minikube service nginx-lb -n nginx
+|-----------|----------|-------------|---------------------------|
+| NAMESPACE |   NAME   | TARGET PORT |            URL            |
+|-----------|----------|-------------|---------------------------|
+| nginx     | nginx-lb |          80 | http://192.168.49.2:32720 |
+|-----------|----------|-------------|---------------------------|
+* Starting tunnel for service nginx-lb.
+|-----------|----------|-------------|------------------------|
+| NAMESPACE |   NAME   | TARGET PORT |          URL           |
+|-----------|----------|-------------|------------------------|
+| nginx     | nginx-lb |             | http://127.0.0.1:52887 |
+|-----------|----------|-------------|------------------------|
+* Opening service nginx/nginx-lb in default browser...
+! Because you are using a Docker driver on windows, the terminal needs to be open to run it.
+* Stopping tunnel for service nginx-lb.
+
+In-order to access the app externally without using the minikube service command we need to implement Ingress
+
+#Deploying INGRESS
+
+For this demo we are using NGINX-INGRESS
+
+
+PS C:\mobius-k8s> helm repo add bitnami/nginx-ingress-controller
+
+PS C:\mobius-k8s> helm repo list
+NAME                    URL
+bitnami                 https://charts.bitnami.com/bitnami
+kubernetes-dashboard    https://kubernetes.github.io/dashboard/
+runix                   https://helm.runix.net
+metallb                 https://metallb.github.io/metallb
+
+PS C:\mobius-k8s> helm repo update
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "metallb" chart repository
+...Successfully got an update from the "kubernetes-dashboard" chart repository
+...Successfully got an update from the "runix" chart repository
+...Successfully got an update from the "bitnami" chart repository
+Update Complete. ⎈Happy Helming!⎈
+
+PS C:\mobius-k8s> helm search repo nginx ingress
+NAME                                    CHART VERSION   APP VERSION     DESCRIPTION                            
+bitnami/nginx-ingress-controller        9.3.18          1.4.0           NGINX Ingress Controller is an Ingress controll...
+
+PS C:\mobius-k8s> helm pull bitnami/nginx-ingress-controller
+
+PS C:\mobius-k8s> helm install ingress .\nginx-ingress-controller-9.3.18.tgz -n nginx-ingress --create-namespace
+NAME: ingress
+LAST DEPLOYED: Mon Oct 24 07:30:07 2022
+NAMESPACE: nginx-ingress
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+CHART NAME: nginx-ingress-controller
+CHART VERSION: 9.3.18
+APP VERSION: 1.4.0
+
+** Please be patient while the chart is being deployed **
+
+The nginx-ingress controller has been installed.
+
+Get the application URL by running these commands:
+
+ NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        You can watch its status by running 'kubectl get --namespace nginx-ingress svc -w ingress-nginx-ingress-controller'
+
+    export SERVICE_IP=$(kubectl get svc --namespace nginx-ingress ingress-nginx-ingress-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+    echo "Visit http://${SERVICE_IP} to access your application via HTTP."
+    echo "Visit https://${SERVICE_IP} to access your application via HTTPS."
+
+An example Ingress that makes use of the controller:
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: example
+  namespace: nginx-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: www.example.com
+      http:
+        paths:
+          - backend:
+              service:
+                name: example-service
+                port:
+                  number: 80
+            path: /
+            pathType: Prefix
+  # This section is only required if TLS is to be enabled for the Ingress
+  tls:
+      - hosts:
+          - www.example.com
+        secretName: example-tls
+
+If TLS is enabled for the Ingress, a Secret containing the certificate and key must also be provided:
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: example-tls
+  namespace: nginx-ingress
+data:
+  tls.crt: <base64 encoded cert>
+  tls.key: <base64 encoded key>
+type: kubernetes.io/tls
+
+PS C:\mobius-k8s> kubectl get all -n nginx-ingress
+
+NAME                                                                  READY   STATUS    RESTARTS   AGE
+pod/ingress-nginx-ingress-controller-5dd4758974-vck5n                 1/1     Running   0          54s
+pod/ingress-nginx-ingress-controller-default-backend-5886d49962cmd9   1/1     Running   0          54s
+
+NAME                                                       TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)                      AGE
+service/ingress-nginx-ingress-controller                   LoadBalancer   10.101.55.230   192.168.223.11   80:32571/TCP,443:31625/TCP   54s
+service/ingress-nginx-ingress-controller-default-backend   ClusterIP      10.98.33.105    <none>           80/TCP                       54s
+
+NAME                                                               READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/ingress-nginx-ingress-controller                   1/1     1            1           54s
+deployment.apps/ingress-nginx-ingress-controller-default-backend   1/1     1            1           54s
+
+NAME                                                                          DESIRED   CURRENT   READY   AGE
+replicaset.apps/ingress-nginx-ingress-controller-5dd4758974                   1         1         1       54s
+replicaset.apps/ingress-nginx-ingress-controller-default-backend-5886d4996c   1         1         1       54s
+
+# Ingress has been successfully deployed now we need to deploy ingress rules that will route the incoming requests to the apprrpriate service of the pod that needs to be exposed.
+# Ingress rules needs to be deployed in the particular NS of the pod which needs to be exposed
+
+PS C:\mobius-k8s> kubectl get all -n nginx
+NAME                        READY   STATUS    RESTARTS      AGE
+pod/nginx-76d6c9b8c-sxwhs   1/1     Running   3 (24h ago)   32h
+
+NAME                            TYPE           CLUSTER-IP       EXTERNAL-IP      PORT(S)        AGE
+service/nginx-76d6c9b8c-sxwhs   ClusterIP      10.99.219.249    <none>           80/TCP         18h
+service/nginx-lb                LoadBalancer   10.107.235.127   192.168.223.10   80:32720/TCP   41m
+
+NAME                    READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/nginx   1/1     1            1           32h
+
+NAME                              DESIRED   CURRENT   READY   AGE
+replicaset.apps/nginx-76d6c9b8c   1         1         1       32h
+
+#iNGRESS RULES
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-ingressrule
+  namespace: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+    - host: ingress.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-lb
+                port:
+                  number: 80
+
+PS C:\mobius-k8s> kubectl apply -f .\nginx-ingressrule.yaml -n nginx
+ingress.networking.k8s.io/nginx-ingressrule created
+
+PS C:\mobius-k8s> minikube service nginx-76d6c9b8c-sxwhs --url -n nginx
+* service nginx/nginx-76d6c9b8c-sxwhs has no node port
+http://127.0.0.1:59287
+! Because you are using a Docker driver on windows, the terminal needs to be open to run it.
+
