@@ -464,9 +464,11 @@ spec:
                   number: 80
 
 PS C:\mobius-k8s> kubectl apply -f .\nginx-ingressrule.yaml -n nginx
+
 ingress.networking.k8s.io/nginx-ingressrule created
 
 PS C:\mobius-k8s> minikube service nginx-76d6c9b8c-sxwhs --url -n nginx
+
 * service nginx/nginx-76d6c9b8c-sxwhs has no node port
 http://127.0.0.1:59287
 ! Because you are using a Docker driver on windows, the terminal needs to be open to run it.
