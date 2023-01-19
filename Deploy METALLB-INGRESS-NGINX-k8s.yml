@@ -179,7 +179,7 @@ spec:
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata:
-  name: L2Advertisement
+  name: l2advertisement
   namespace: metallb-system
 spec:
   ipAddressPools:
@@ -471,3 +471,4 @@ PS C:\mobius-k8s> minikube service nginx-76d6c9b8c-sxwhs --url -n nginx
 http://127.0.0.1:59287
 ! Because you are using a Docker driver on windows, the terminal needs to be open to run it.
 
+After the addon is enabled, please run "minikube tunnel" and your ingress resources would be available at "127.0.0.1"
